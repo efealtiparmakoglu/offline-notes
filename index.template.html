@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>offline notes</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: ui-monospace, monospace;
+    background: #101418; color: #d7dde3;
+    margin: 0; padding: 16px;
+    display: grid; grid-template-columns: 240px 1fr; gap: 16px;
+    height: 100vh;
+  }
+  h1 { font-size: 16px; margin: 0 0 10px; }
+  #sidebar { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+  #list { overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 4px; }
+  .note-item {
+    text-align: left; background: #1b2129; color: #d7dde3;
+    border: 1px solid #2c343c; padding: 8px; cursor: pointer;
+    display: flex; flex-direction: column; gap: 2px;
+  }
+  .note-item.active { border-color: #4d9de0; }
+  .note-item small { color: #7a848e; }
+  input, textarea {
+    font: inherit; background: #1b2129; color: #d7dde3;
+    border: 1px solid #2c343c; padding: 8px; width: 100%;
+  }
+  textarea { flex: 1; min-height: 200px; resize: vertical; }
+  #editor { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+  #preview-title { color: #4d9de0; font-weight: bold; }
+  #preview {
+    border: 1px solid #2c343c; padding: 12px; overflow-y: auto;
+    background: #141a20; min-height: 120px; flex: 1;
+  }
+  #preview h1, #preview h2, #preview h3 { color: #4d9de0; }
+  #preview code { background: #232b33; padding: 1px 5px; }
+  .toolbar { display: flex; gap: 6px; flex-wrap: wrap; }
+  button {
+    font: inherit; background: #1b2129; color: #d7dde3;
+    border: 1px solid #2c343c; padding: 5px 10px; cursor: pointer;
+  }
+  #import-status, #count { font-size: 12px; color: #7a848e; }
+  .split { display: flex; gap: 12px; flex: 1; min-height: 0; }
+  .split > * { flex: 1; display: flex; flex-direction: column; gap: 6px; min-height: 0; }
+</style>
+</head>
+<body>
+  <div id="sidebar">
+    <h1>offline notes</h1>
+    <input id="search" placeholder="search…">
+    <div id="list"></div>
+    <div class="toolbar">
+      <button id="new-note">+ new</button>
+      <button id="delete">delete</button>
+    </div>
+    <div id="count"></div>
+  </div>
+  <div id="editor">
+    <input id="title" placeholder="title">
+    <div class="split">
+      <textarea id="body" placeholder="markdown here…"></textarea>
+      <div>
+        <div id="preview-title"></div>
+        <div id="preview"></div>
+      </div>
+    </div>
+    <div class="toolbar">
+      <button id="export">export JSON</button>
+      <button id="import">import JSON</button>
+      <span id="import-status"></span>
+    </div>
+  </div>
+<script type="module">
+/*__APP__*/
+</script>
+</body>
+</html>

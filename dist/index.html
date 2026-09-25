@@ -1,0 +1,485 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>offline notes</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: ui-monospace, monospace;
+    background: #101418; color: #d7dde3;
+    margin: 0; padding: 16px;
+    display: grid; grid-template-columns: 240px 1fr; gap: 16px;
+    height: 100vh;
+  }
+  h1 { font-size: 16px; margin: 0 0 10px; }
+  #sidebar { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+  #list { overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 4px; }
+  .note-item {
+    text-align: left; background: #1b2129; color: #d7dde3;
+    border: 1px solid #2c343c; padding: 8px; cursor: pointer;
+    display: flex; flex-direction: column; gap: 2px;
+  }
+  .note-item.active { border-color: #4d9de0; }
+  .note-item small { color: #7a848e; }
+  input, textarea {
+    font: inherit; background: #1b2129; color: #d7dde3;
+    border: 1px solid #2c343c; padding: 8px; width: 100%;
+  }
+  textarea { flex: 1; min-height: 200px; resize: vertical; }
+  #editor { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+  #preview-title { color: #4d9de0; font-weight: bold; }
+  #preview {
+    border: 1px solid #2c343c; padding: 12px; overflow-y: auto;
+    background: #141a20; min-height: 120px; flex: 1;
+  }
+  #preview h1, #preview h2, #preview h3 { color: #4d9de0; }
+  #preview code { background: #232b33; padding: 1px 5px; }
+  .toolbar { display: flex; gap: 6px; flex-wrap: wrap; }
+  button {
+    font: inherit; background: #1b2129; color: #d7dde3;
+    border: 1px solid #2c343c; padding: 5px 10px; cursor: pointer;
+  }
+  #import-status, #count { font-size: 12px; color: #7a848e; }
+  .split { display: flex; gap: 12px; flex: 1; min-height: 0; }
+  .split > * { flex: 1; display: flex; flex-direction: column; gap: 6px; min-height: 0; }
+</style>
+</head>
+<body>
+  <div id="sidebar">
+    <h1>offline notes</h1>
+    <input id="search" placeholder="search…">
+    <div id="list"></div>
+    <div class="toolbar">
+      <button id="new-note">+ new</button>
+      <button id="delete">delete</button>
+    </div>
+    <div id="count"></div>
+  </div>
+  <div id="editor">
+    <input id="title" placeholder="title">
+    <div class="split">
+      <textarea id="body" placeholder="markdown here…"></textarea>
+      <div>
+        <div id="preview-title"></div>
+        <div id="preview"></div>
+      </div>
+    </div>
+    <div class="toolbar">
+      <button id="export">export JSON</button>
+      <button id="import">import JSON</button>
+      <span id="import-status"></span>
+    </div>
+  </div>
+<script type="module">
+// core.ts + store.ts (inlined)
+/* Note model, markdown preview and search — pure logic, no DOM/IDB. */
+
+                       
+             
+                
+                           
+                              
+                  
+ 
+
+export function newId(now         = Date.now())         {
+  return now.toString(36) + Math.floor(Math.random() * 1e6).toString(36);
+}
+
+export function createNote(now        , title = "", body = "")       {
+  return { id: newId(now), title, body, created: now, updated: now };
+}
+
+/** Derive the title from the body when empty: first non-empty line. */
+export function noteTitle(note      )         {
+  if (note.title.trim() !== "") return note.title;
+  const line = note.body.split("\n").find((l) => l.trim() !== "");
+  return line ? line.replace(/^#+\s*/, "").slice(0, 60) : "untitled";
+}
+
+/** Case-insensitive substring search across title and body. */
+export function searchNotes(notes        , query        )         {
+  const q = query.trim().toLocaleLowerCase("en");
+  if (q === "") return [...notes];
+  return notes.filter(
+    (note) =>
+      note.title.toLocaleLowerCase("en").includes(q) ||
+      note.body.toLocaleLowerCase("en").includes(q),
+  );
+}
+
+/** Markdown → HTML for the preview: headings, lists, bold/italic/code,
+ * links, rules, paragraphs. Escapes HTML in the source first. */
+export function markdownToHtml(markdown        )         {
+  const escaped = markdown
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+  const out           = [];
+  let listOpen                     = null;
+  let paragraph           = [];
+
+  const inline = (text        )         =>
+    text
+      .replace(/`([^`]+)`/g, "<code>$1</code>")
+      .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+      .replace(/\*([^*]+)\*/g, "<em>$1</em>")
+      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+
+  const closeList = ()       => {
+    if (listOpen) {
+      out.push(`</${listOpen}>`);
+      listOpen = null;
+    }
+  };
+  const closeParagraph = ()       => {
+    if (paragraph.length > 0) {
+      out.push(`<p>${inline(paragraph.join(" "))}</p>`);
+      paragraph = [];
+    }
+  };
+
+  for (const raw of escaped.split("\n")) {
+    const line = raw.trimEnd();
+    const heading = /^(#{1,3})\s+(.*)$/.exec(line);
+    if (heading) {
+      closeParagraph();
+      closeList();
+      const level = heading[1] .length;
+      out.push(`<h${level}>${inline(heading[2]          )}</h${level}>`);
+      continue;
+    }
+    if (/^---+\s*$/.test(line)) {
+      closeParagraph();
+      closeList();
+      out.push("<hr>");
+      continue;
+    }
+    if (/^[-*]\s+/.test(line)) {
+      closeParagraph();
+      if (listOpen !== "ul") {
+        closeList();
+        out.push("<ul>");
+        listOpen = "ul";
+      }
+      out.push(`<li>${inline(line.replace(/^[-*]\s+/, ""))}</li>`);
+      continue;
+    }
+    const numbered = /^\d+\.\s+(.*)$/.exec(line);
+    if (numbered) {
+      closeParagraph();
+      if (listOpen !== "ol") {
+        closeList();
+        out.push("<ol>");
+        listOpen = "ol";
+      }
+      out.push(`<li>${inline(numbered[1]          )}</li>`);
+      continue;
+    }
+    if (line.trim() === "") {
+      closeParagraph();
+      closeList();
+      continue;
+    }
+    paragraph.push(line.trim());
+  }
+  closeParagraph();
+  closeList();
+  return out.join("\n");
+}
+
+/** Export format: versioned JSON envelope. */
+                                 
+                          
+             
+                     
+                
+ 
+
+export function exportNotes(notes        )                 {
+  return {
+    format: "offline-notes",
+    version: 1,
+    exportedAt: Date.now(),
+    notes: [...notes],
+  };
+}
+
+/** Import: validates the envelope, dedupes by id (newest wins). */
+export function importNotes(
+  text        ,
+  existing        ,
+)                                                       {
+  let envelope                ;
+  try {
+    envelope = JSON.parse(text)                  ;
+  } catch {
+    throw new Error("not valid JSON");
+  }
+  if (envelope.format !== "offline-notes" || !Array.isArray(envelope.notes)) {
+    throw new Error("not an offline-notes export");
+  }
+  const byId = new Map              ();
+  for (const note of existing) byId.set(note.id, note);
+  let imported = 0;
+  let skipped = 0;
+  for (const note of envelope.notes) {
+    if (!note.id || typeof note.body !== "string") {
+      skipped++;
+      continue;
+    }
+    const current = byId.get(note.id);
+    if (current === undefined) {
+      byId.set(note.id, note);
+      imported++;
+    } else if ((note.updated ?? 0) > (current.updated ?? 0)) {
+      byId.set(note.id, note);
+      imported++;
+    } else {
+      skipped++;
+    }
+  }
+  return { notes: [...byId.values()], imported, skipped };
+}
+
+/* Storage abstraction: async key-value note store with two
+ * implementations — IndexedDB (browser) and in-memory (tests/fallback).
+ * Both share one interface so the UI and tests use identical code. */
+
+                                      
+
+                            
+                            
+                                 
+                                    
+ 
+
+/** In-memory implementation (tests and no-IDB fallback). */
+export function memoryStore(initial         = [])                               {
+  const map = new Map              ();
+  for (const note of initial) map.set(note.id, note);
+  return {
+    data: initial,
+    async getAll() {
+      return [...map.values()];
+    },
+    async put(note) {
+      map.set(note.id, note);
+    },
+    async delete(id) {
+      map.delete(id);
+    },
+  };
+}
+
+const DB_NAME = "offline-notes";
+const STORE = "notes";
+
+/** IndexedDB implementation with a promise wrapper. */
+export function idbStore()                     {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, 1);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(STORE)) {
+        db.createObjectStore(STORE, { keyPath: "id" });
+      }
+    };
+    request.onerror = () => reject(request.error ?? new Error("idb open failed"));
+    request.onsuccess = () => {
+      const db = request.result;
+      const run =    (mode                    , fn                                       )             =>
+        new Promise((res, rej) => {
+          const tx = db.transaction(STORE, mode);
+          const store = tx.objectStore(STORE);
+          const req = fn(store);
+          req.onsuccess = () => res(req.result     );
+          req.onerror = () => rej(req.error ?? new Error("idb request failed"));
+        });
+      resolve({
+        async getAll() {
+          return run        ("readonly", (store) => store.getAll());
+        },
+        async put(note      ) {
+          await run("readwrite", (store) => store.put(note));
+        },
+        async delete(id        ) {
+          await run("readwrite", (store) => store.delete(id));
+        },
+      });
+    };
+  });
+}
+
+/** Pick the best available store. */
+export async function openStore()                     {
+  if (typeof indexedDB !== "undefined") {
+    try {
+      return await idbStore();
+    } catch {
+      /* fall through to memory */
+    }
+  }
+  return memoryStore();
+}
+
+/* DOM layer: sidebar list, editor, live markdown preview, import/export,
+ * delete. Uses openStore() — IndexedDB in the browser. */
+
+
+let store           ;
+let notes         = [];
+let activeId                = null;
+let filter = "";
+
+const $ = (id        )              => document.getElementById(id)               ;
+
+async function refreshList()                {
+  notes = await store.getAll();
+  notes.sort((a, b) => b.updated - a.updated);
+  const listEl = $("list");
+  listEl.innerHTML = "";
+  for (const note of searchNotes(notes, filter)) {
+    const item = document.createElement("button");
+    item.className = "note-item" + (note.id === activeId ? " active" : "");
+    item.innerHTML = `<strong></strong><small></small>`;
+    (item.querySelector("strong")               ).textContent = noteTitle(note);
+    (item.querySelector("small")               ).textContent = new Date(
+      note.updated,
+    ).toLocaleString();
+    item.addEventListener("click", () => selectNote(note.id));
+    listEl.appendChild(item);
+  }
+  $("count").textContent = `${notes.length} note(s)`;
+}
+
+function selectNote(id        )       {
+  activeId = id;
+  const note = notes.find((n) => n.id === id);
+  if (!note) return;
+  ($("title")                    ).value = note.title;
+  ($("body")                       ).value = note.body;
+  updatePreview();
+  void refreshList();
+}
+
+function updatePreview()       {
+  const body = ($("body")                       ).value;
+  $("preview").innerHTML = markdownToHtml(body);
+  $("preview-title").textContent =
+    ($("title")                    ).value || noteTitle({
+      ...(notes[0] ?? createNote(0)),
+      id: activeId ?? "0",
+      title: ($("title")                    ).value,
+      body,
+    }        );
+}
+
+async function saveActive()                {
+  if (!activeId) return;
+  const note = notes.find((n) => n.id === activeId);
+  if (!note) return;
+  note.title = ($("title")                    ).value;
+  note.body = ($("body")                       ).value;
+  note.updated = Date.now();
+  await store.put(note);
+  await refreshList();
+}
+
+function newNote()       {
+  const note = createNote(Date.now(), "", "");
+  notes.push(note);
+  store.put(note).then(() => {
+    activeId = note.id;
+    ($("title")                    ).value = "";
+    ($("body")                       ).value = "";
+    void refreshList();
+    ($("title")                    ).focus();
+  });
+}
+
+async function deleteActive()                {
+  if (!activeId) return;
+  await store.delete(activeId);
+  activeId = null;
+  ($("title")                    ).value = "";
+  ($("body")                       ).value = "";
+  updatePreview();
+  await refreshList();
+}
+
+function downloadExport()       {
+  const envelope = exportNotes(notes);
+  const blob = new Blob([JSON.stringify(envelope, null, 2)], { type: "application/json" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = `notes-${new Date().toISOString().slice(0, 10)}.json`;
+  link.click();
+}
+
+function importClick()       {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = ".json";
+  input.addEventListener("change", async () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    const text = await file.text();
+    try {
+      const { notes: imported, imported: count, skipped } = importNotes(text, notes);
+      for (const note of imported) await store.put(note);
+      await refreshList();
+      $("import-status").textContent =
+        `imported ${count}, skipped ${skipped} (older/invalid)`;
+    } catch (error) {
+      $("import-status").textContent = `error: ${String(error)}`;
+    }
+  });
+  input.click();
+}
+
+async function setup()                {
+  store = await openStore();
+  notes = await store.getAll();
+  notes.sort((a, b) => b.updated - a.updated);
+  if (notes.length === 0) {
+    const welcome = createNote(
+      Date.now(),
+      "Welcome",
+      "# offline notes\n\n- everything is stored **locally** (IndexedDB)\n- write **markdown**, see the preview\n- export/import as JSON from the toolbar\n\nstart typing…",
+    );
+    await store.put(welcome);
+    notes.push(welcome);
+  }
+  activeId = notes[0]?.id ?? null;
+  selectNote(activeId          );
+
+  $("new-note").addEventListener("click", newNote);
+  $("delete").addEventListener("click", deleteActive);
+  $("export").addEventListener("click", downloadExport);
+  $("import").addEventListener("click", importClick);
+  $("search").addEventListener("input", (event) => {
+    filter = (event.target                    ).value;
+    void refreshList();
+  });
+  ($("title")                    ).addEventListener("input", () => {
+    void saveActive();
+    updatePreview();
+  });
+  ($("body")                       ).addEventListener("input", () => {
+    void saveActive();
+    updatePreview();
+  });
+  setInterval(() => {
+    void refreshList();
+  }, 15000);
+}
+
+setup();
+
+</script>
+</body>
+</html>

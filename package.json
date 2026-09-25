@@ -1,0 +1,12 @@
+{
+  "name": "offline-notes",
+  "version": "1.0.0",
+  "description": "Local-first notes app: IndexedDB storage, markdown preview, import/export JSON — single-file offline HTML",
+  "license": "MIT",
+  "type": "module",
+  "engines": { "node": ">=22.18.0" },
+  "scripts": {
+    "test": "node --test tests/",
+    "build": "node build.ts"
+  }
+}
